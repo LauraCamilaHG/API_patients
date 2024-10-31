@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List
-from .models import Paciente, Especialista, Cita, CitaCreate
+from .models import Paciente, Especialista, Cita, CitaCreate, Medicamento
 from .database import get_db_connection
 from datetime import date, datetime
 import mysql.connector
@@ -221,3 +221,79 @@ async def listar_citas():
     finally:
         cursor.close()
         conn.close()
+
+@router.post("/medicamentos/bulk", response_model=List[Medicamento], tags=["Medicamentos"])
+async def crear_medicamentos_bulk(medicamentos: List[Medicamento]):
+    """
+    Crea múltiples medicamentos en la base de datos
+    """
+    db = get_db_connection()
+    cursor = db.cursor()
+    try:
+        query = """
+        INSERT INTO medicamentos (nombre, descripcion, stock)
+        VALUES (%s, %s, %s)
+        """
+        
+        values = [
+            (
+                medicamento.nombre,
+                medicamento.descripcion,
+                medicamento.stock
+            ) 
+            for medicamento in medicamentos
+        ]
+        
+        cursor.executemany(query, values)
+        db.commit()
+        
+        first_id = cursor.lastrowid
+        medicamentos_creados = []
+        for idx, medicamento in enumerate(medicamentos):
+            medicamento_dict = medicamento.model_dump()
+            medicamento_dict['id_medicamento'] = first_id + idx
+            medicamentos_creados.append(Medicamento(**medicamento_dict))
+        
+        return medicamentos_creados
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al crear los medicamentos: {str(e)}"
+        )
+    finally:
+        cursor.close()
+        db.close()
+
+@router.get("/medicamentos/", response_model=List[Medicamento], tags=["Medicamentos"])
+async def listar_medicamentos():
+    """
+    Obtiene la lista de todos los medicamentos registrados
+    """
+    db = get_db_connection()
+    cursor = db.cursor(dictionary=True)
+    
+    try:
+        query = """
+        SELECT 
+            id_medicamento,
+            nombre,
+            descripcion,
+            stock
+        FROM medicamentos
+        ORDER BY nombre ASC
+        """
+        
+        cursor.execute(query)
+        medicamentos = cursor.fetchall()
+        return [Medicamento(**medicamento) for medicamento in medicamentos]
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al consultar los medicamentos: {str(e)}"
+        )
+    finally:
+        cursor.close()
+        db.close()
