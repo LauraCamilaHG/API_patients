@@ -16,11 +16,18 @@ class MedicamentoCreate(BaseModel):
 class Medicamento(MedicamentoCreate):
     id_medicamento: int | None = None
 
+class DiagnosticoCreate(BaseModel):
+    descripcion: str
+    fecha_diagnostico: date
+
 class Diagnostico(BaseModel):
     id_diagnostico: int | None = None
     id_cita: int
-    descripcion: str   
+    id_paciente: int
+    descripcion: str
     fecha_diagnostico: date
+    nombre_paciente: str | None = None
+    nombre_especialista: str | None = None
 
 class FormulaCreate(BaseModel):
     id_diagnostico: int

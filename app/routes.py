@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List
-from .models import Paciente, Especialista, Cita, CitaCreate, Medicamento, Formula
+from .models import Paciente, Especialista, Cita, CitaCreate, Medicamento, Formula, Diagnostico, DiagnosticoCreate
 from .database import get_db_connection
 from datetime import date, datetime
 import mysql.connector
@@ -431,6 +431,154 @@ async def obtener_formulas_por_diagnostico(id_diagnostico: int):
         raise HTTPException(
             status_code=500,
             detail=f"Error al consultar las fórmulas: {str(e)}"
+        )
+    finally:
+        cursor.close()
+        db.close()
+
+# Mantener solo un endpoint POST para crear diagnósticos
+@router.post("/diagnosticos/{id_cita}/{id_paciente}/", response_model=Diagnostico, tags=["Diagnósticos"])
+async def crear_diagnostico(
+    id_cita: int,
+    id_paciente: int,
+    diagnostico: DiagnosticoCreate
+):
+    """
+    Crea un diagnóstico en la base de datos.
+    El id_cita y id_paciente se proporcionan como parámetros en la URL.
+    """
+    db = get_db_connection()
+    cursor = db.cursor(dictionary=True)
+    
+    try:
+        # Verificar que exista la cita
+        cursor.execute("""
+            SELECT c.*, p.nombre as nombre_paciente, e.nombre as nombre_especialista 
+            FROM citas c
+            JOIN pacientes p ON c.id_paciente = p.id_paciente
+            JOIN especialistas e ON c.id_especialista = e.id_especialista
+            WHERE c.id_cita = %s AND c.id_paciente = %s
+        """, (id_cita, id_paciente))
+        
+        cita = cursor.fetchone()
+        if not cita:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontró una cita con ID {id_cita} para el paciente {id_paciente}"
+            )
+        
+        # Insertar el diagnóstico
+        query = """
+        INSERT INTO diagnosticos (id_cita, id_paciente, descripcion, fecha_diagnostico)
+        VALUES (%s, %s, %s, %s)
+        """
+        
+        values = (
+            id_cita,
+            id_paciente,
+            diagnostico.descripcion,
+            diagnostico.fecha_diagnostico
+        )
+        
+        cursor.execute(query, values)
+        id_diagnostico = cursor.lastrowid
+        
+        # Crear el objeto de respuesta
+        diagnostico_creado = {
+            "id_diagnostico": id_diagnostico,
+            "id_cita": id_cita,
+            "id_paciente": id_paciente,
+            "descripcion": diagnostico.descripcion,
+            "fecha_diagnostico": diagnostico.fecha_diagnostico,
+            "nombre_paciente": cita["nombre_paciente"],
+            "nombre_especialista": cita["nombre_especialista"]
+        }
+        
+        db.commit()
+        return Diagnostico(**diagnostico_creado)
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al crear el diagnóstico: {str(e)}"
+        )
+    finally:
+        cursor.close()
+        db.close()
+
+@router.get("/diagnosticos/", response_model=List[Diagnostico], tags=["Diagnósticos"])
+async def listar_diagnosticos():
+    """
+    Obtiene la lista de todos los diagnósticos con información detallada
+    """
+    db = get_db_connection()
+    cursor = db.cursor(dictionary=True)
+    
+    try:
+        query = """
+        SELECT 
+            d.*,
+            p.nombre as nombre_paciente,
+            e.nombre as nombre_especialista
+        FROM diagnosticos d
+        JOIN citas c ON d.id_cita = c.id_cita
+        JOIN pacientes p ON c.id_paciente = p.id_paciente
+        JOIN especialistas e ON c.id_especialista = e.id_especialista
+        ORDER BY d.fecha_diagnostico DESC
+        """
+        
+        cursor.execute(query)
+        diagnosticos = cursor.fetchall()
+        return [Diagnostico(**diagnostico) for diagnostico in diagnosticos]
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al consultar los diagnósticos: {str(e)}"
+        )
+    finally:
+        cursor.close()
+        db.close()
+
+# Endpoint adicional para obtener diagnósticos por paciente
+@router.get("/diagnosticos/paciente/{id_paciente}", response_model=List[Diagnostico], tags=["Diagnósticos"])
+async def obtener_diagnosticos_por_paciente(id_paciente: int):
+    """
+    Obtiene todos los diagnósticos de un paciente específico
+    """
+    db = get_db_connection()
+    cursor = db.cursor(dictionary=True)
+    
+    try:
+        query = """
+        SELECT 
+            d.*,
+            p.nombre as nombre_paciente,
+            e.nombre as nombre_especialista
+        FROM diagnosticos d
+        JOIN citas c ON d.id_cita = c.id_cita
+        JOIN pacientes p ON c.id_paciente = p.id_paciente
+        JOIN especialistas e ON c.id_especialista = e.id_especialista
+        WHERE p.id_paciente = %s
+        ORDER BY d.fecha_diagnostico DESC
+        """
+        
+        cursor.execute(query, (id_paciente,))
+        diagnosticos = cursor.fetchall()
+        
+        if not diagnosticos:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No se encontraron diagnósticos para el paciente {id_paciente}"
+            )
+            
+        return [Diagnostico(**diagnostico) for diagnostico in diagnosticos]
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al consultar los diagnósticos: {str(e)}"
         )
     finally:
         cursor.close()
