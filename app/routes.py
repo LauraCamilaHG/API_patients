@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List
-from .models import Paciente
+from .models import Paciente, Especialista, Cita, CitaCreate, Medicamento
 from .database import get_db_connection
 from datetime import date, datetime
 import mysql.connector
@@ -92,6 +92,207 @@ async def listar_pacientes():
         raise HTTPException(
             status_code=500,
             detail=f"Error al consultar los pacientes: {str(e)}"
+        )
+    finally:
+        cursor.close()
+        db.close()
+
+# POST Especialistas
+@router.post("/especialistas/bulk", response_model=List[Especialista], tags=["Especialistas"])
+async def crear_especialistas_bulk(especialistas: List[Especialista]):
+    db = get_db_connection()
+    cursor = db.cursor()
+    try:
+        query = """
+        INSERT INTO especialistas (documento, nombre, especialidad)
+        VALUES (%s, %s, %s)
+        """
+        values = [
+            (
+                especialista.documento,
+                especialista.nombre,
+                especialista.especialidad
+            ) 
+            for especialista in especialistas
+        ]
+        cursor.executemany(query, values)
+        db.commit()
+        
+        first_id = cursor.lastrowid
+        especialistas_creados = []
+        for idx, especialista in enumerate(especialistas):
+            especialista_dict = especialista.model_dump()
+            especialista_dict['id_especialista'] = first_id + idx
+            especialistas_creados.append(Especialista(**especialista_dict))
+        
+        return especialistas_creados
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        db.close()
+
+# GET Especialistas
+@router.get("/especialistas/", response_model=List[Especialista], tags=["Especialistas"])
+async def listar_especialistas():
+    db = get_db_connection()
+    cursor = db.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT * FROM especialistas ORDER BY nombre")
+        return [Especialista(**esp) for esp in cursor.fetchall()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        db.close()
+
+# POST Citas
+@router.post("/citas/{id_paciente}/{id_especialista}/", response_model=List[Cita], tags=["Citas"])
+async def crear_citas_bulk(id_paciente: int, id_especialista: int, citas: List[CitaCreate]):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Verificar si existe el paciente y especialista
+        cursor.execute("SELECT * FROM pacientes WHERE id_paciente = %s", (id_paciente,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail=f"Paciente {id_paciente} no encontrado")
+        
+        cursor.execute("SELECT * FROM especialistas WHERE id_especialista = %s", (id_especialista,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail=f"Especialista {id_especialista} no encontrado")
+        
+        citas_creadas = []
+        for cita in citas:
+            try:
+                fecha_hora_utc = cita.fecha_hora.astimezone(timezone.utc).replace(tzinfo=None)
+                
+                query = """
+                INSERT INTO citas (id_paciente, id_especialista, fecha_hora, estado)
+                VALUES (%s, %s, %s, %s)
+                """
+                values = (id_paciente, id_especialista, fecha_hora_utc, cita.estado)
+                
+                cursor.execute(query, values)
+                id_cita = cursor.lastrowid
+                citas_creadas.append(Cita(
+                    id_cita=id_cita,
+                    id_paciente=id_paciente,
+                    id_especialista=id_especialista,
+                    fecha_hora=cita.fecha_hora,
+                    estado=cita.estado
+                ))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Error al crear cita: {str(e)}")
+        
+        conn.commit()
+        return citas_creadas
+    
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error en la operación: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
+
+# GET Citas
+@router.get("/citas/", response_model=List[Cita], tags=["Citas"])
+async def listar_citas():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        query = """
+        SELECT 
+            c.*,
+            p.nombre as nombre_paciente,
+            e.nombre as nombre_especialista
+        FROM citas c
+        JOIN pacientes p ON c.id_paciente = p.id_paciente
+        JOIN especialistas e ON c.id_especialista = e.id_especialista
+        ORDER BY c.fecha_hora
+        """
+        cursor.execute(query)
+        citas = cursor.fetchall()
+        return [Cita(**cita) for cita in citas]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
+
+@router.post("/medicamentos/bulk", response_model=List[Medicamento], tags=["Medicamentos"])
+async def crear_medicamentos_bulk(medicamentos: List[Medicamento]):
+    """
+    Crea múltiples medicamentos en la base de datos
+    """
+    db = get_db_connection()
+    cursor = db.cursor()
+    try:
+        query = """
+        INSERT INTO medicamentos (nombre, descripcion, stock)
+        VALUES (%s, %s, %s)
+        """
+        
+        values = [
+            (
+                medicamento.nombre,
+                medicamento.descripcion,
+                medicamento.stock
+            ) 
+            for medicamento in medicamentos
+        ]
+        
+        cursor.executemany(query, values)
+        db.commit()
+        
+        first_id = cursor.lastrowid
+        medicamentos_creados = []
+        for idx, medicamento in enumerate(medicamentos):
+            medicamento_dict = medicamento.model_dump()
+            medicamento_dict['id_medicamento'] = first_id + idx
+            medicamentos_creados.append(Medicamento(**medicamento_dict))
+        
+        return medicamentos_creados
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al crear los medicamentos: {str(e)}"
+        )
+    finally:
+        cursor.close()
+        db.close()
+
+@router.get("/medicamentos/", response_model=List[Medicamento], tags=["Medicamentos"])
+async def listar_medicamentos():
+    """
+    Obtiene la lista de todos los medicamentos registrados
+    """
+    db = get_db_connection()
+    cursor = db.cursor(dictionary=True)
+    
+    try:
+        query = """
+        SELECT 
+            id_medicamento,
+            nombre,
+            descripcion,
+            stock
+        FROM medicamentos
+        ORDER BY nombre ASC
+        """
+        
+        cursor.execute(query)
+        medicamentos = cursor.fetchall()
+        return [Medicamento(**medicamento) for medicamento in medicamentos]
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error al consultar los medicamentos: {str(e)}"
         )
     finally:
         cursor.close()
