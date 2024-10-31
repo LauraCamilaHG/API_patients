@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List
-from .models import Paciente
+from .models import Paciente, Especialista
 from .database import get_db_connection
 from datetime import date, datetime
 import mysql.connector
@@ -93,6 +93,56 @@ async def listar_pacientes():
             status_code=500,
             detail=f"Error al consultar los pacientes: {str(e)}"
         )
+    finally:
+        cursor.close()
+        db.close()
+
+# POST Especialistas
+@router.post("/especialistas/bulk", response_model=List[Especialista], tags=["Especialistas"])
+async def crear_especialistas_bulk(especialistas: List[Especialista]):
+    db = get_db_connection()
+    cursor = db.cursor()
+    try:
+        query = """
+        INSERT INTO especialistas (documento, nombre, especialidad)
+        VALUES (%s, %s, %s)
+        """
+        values = [
+            (
+                especialista.documento,
+                especialista.nombre,
+                especialista.especialidad
+            ) 
+            for especialista in especialistas
+        ]
+        cursor.executemany(query, values)
+        db.commit()
+        
+        first_id = cursor.lastrowid
+        especialistas_creados = []
+        for idx, especialista in enumerate(especialistas):
+            especialista_dict = especialista.model_dump()
+            especialista_dict['id_especialista'] = first_id + idx
+            especialistas_creados.append(Especialista(**especialista_dict))
+        
+        return especialistas_creados
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        db.close()
+
+# GET Especialistas
+@router.get("/especialistas/", response_model=List[Especialista], tags=["Especialistas"])
+async def listar_especialistas():
+    db = get_db_connection()
+    cursor = db.cursor(dictionary=True)
+    try:
+        cursor.execute("SELECT * FROM especialistas ORDER BY nombre")
+        return [Especialista(**esp) for esp in cursor.fetchall()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         cursor.close()
         db.close()
