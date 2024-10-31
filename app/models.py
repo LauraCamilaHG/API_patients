@@ -8,11 +8,13 @@ class Paciente(BaseModel):
     fecha_nacimiento: date
     telefono: str      
 
-class Medicamento(BaseModel):
+class MedicamentoCreate(BaseModel):
+    nombre: str
+    descripcion: str
+    stock: int
+
+class Medicamento(MedicamentoCreate):
     id_medicamento: int | None = None
-    nombre: str        
-    descripcion: str   
-    stock: int        
 
 class Diagnostico(BaseModel):
     id_diagnostico: int | None = None
@@ -20,12 +22,16 @@ class Diagnostico(BaseModel):
     descripcion: str   
     fecha_diagnostico: date
 
-class Formula(BaseModel):
-    id_formula: int | None = None
+class FormulaCreate(BaseModel):
     id_diagnostico: int
     id_medicamento: int
-    dosis: str        
-    duracion: int     
+    dosis: str
+    duracion: int
+
+class Formula(FormulaCreate):
+    id_formula: int | None = None
+    nombre_medicamento: str | None = None
+    descripcion_diagnostico: str | None = None
 
 class Especialista(BaseModel):
     id_especialista: int | None = None
