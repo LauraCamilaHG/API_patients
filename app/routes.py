@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List
-from .models import Paciente, Especialista
+from .models import Paciente, Especialista, Cita, CitaCreate
 from .database import get_db_connection
 from datetime import date, datetime
 import mysql.connector
@@ -146,3 +146,78 @@ async def listar_especialistas():
     finally:
         cursor.close()
         db.close()
+
+# POST Citas
+@router.post("/citas/{id_paciente}/{id_especialista}/", response_model=List[Cita], tags=["Citas"])
+async def crear_citas_bulk(id_paciente: int, id_especialista: int, citas: List[CitaCreate]):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Verificar si existe el paciente y especialista
+        cursor.execute("SELECT * FROM pacientes WHERE id_paciente = %s", (id_paciente,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail=f"Paciente {id_paciente} no encontrado")
+        
+        cursor.execute("SELECT * FROM especialistas WHERE id_especialista = %s", (id_especialista,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail=f"Especialista {id_especialista} no encontrado")
+        
+        citas_creadas = []
+        for cita in citas:
+            try:
+                fecha_hora_utc = cita.fecha_hora.astimezone(timezone.utc).replace(tzinfo=None)
+                
+                query = """
+                INSERT INTO citas (id_paciente, id_especialista, fecha_hora, estado)
+                VALUES (%s, %s, %s, %s)
+                """
+                values = (id_paciente, id_especialista, fecha_hora_utc, cita.estado)
+                
+                cursor.execute(query, values)
+                id_cita = cursor.lastrowid
+                citas_creadas.append(Cita(
+                    id_cita=id_cita,
+                    id_paciente=id_paciente,
+                    id_especialista=id_especialista,
+                    fecha_hora=cita.fecha_hora,
+                    estado=cita.estado
+                ))
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"Error al crear cita: {str(e)}")
+        
+        conn.commit()
+        return citas_creadas
+    
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=f"Error en la operación: {str(e)}")
+    finally:
+        cursor.close()
+        conn.close()
+
+# GET Citas
+@router.get("/citas/", response_model=List[Cita], tags=["Citas"])
+async def listar_citas():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        query = """
+        SELECT 
+            c.*,
+            p.nombre as nombre_paciente,
+            e.nombre as nombre_especialista
+        FROM citas c
+        JOIN pacientes p ON c.id_paciente = p.id_paciente
+        JOIN especialistas e ON c.id_especialista = e.id_especialista
+        ORDER BY c.fecha_hora
+        """
+        cursor.execute(query)
+        citas = cursor.fetchall()
+        return [Cita(**cita) for cita in citas]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
